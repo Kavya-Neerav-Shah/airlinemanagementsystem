@@ -6,7 +6,7 @@ import {
   Ticket, XCircle, RefreshCw, Luggage, ShieldCheck, Menu
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const API_BASE = "http://127.0.0.1:5000";
 
 function money(value) {
   const number = Number(value);
@@ -19,16 +19,18 @@ function prettyDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
+
 function normalizeFlight(f) {
   return {
     ...f,
-    flightno: String(f.flightno ?? ""),
-    origin: f.origin ?? "Unknown",
-    destination: f.destination ?? "Unknown",
-    departure: f.departure ?? "—",
-    arrival: f.arrival ?? "—",
+    flightno: String(f.flightno ?? f.flightNumber ?? ""),
+    origin: f.origin ?? f.departureCity ?? "Unknown",
+    destination: f.destination ?? f.arrivalCity ?? "Unknown",
+    departure: f.departureTime ?? f.departure ?? "—",
+    arrival: f.arrivalTime ?? f.arrival ?? "—",
   };
 }
+
 
 export default function App() {
   const [flights, setFlights] = useState([]);
@@ -45,6 +47,7 @@ export default function App() {
   const [passengerId, setPassengerId] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [tickets, setTickets] = useState([]);
   const [ticketData, setTicketData] = useState(null);
   const [activeTab, setActiveTab] = useState("search");
   const [cancelPassengerId, setCancelPassengerId] = useState("");
@@ -52,6 +55,9 @@ export default function App() {
   const [cancelSeatNo, setCancelSeatNo] = useState("");
   const [cancelResult, setCancelResult] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
+  useEffect(() => {
+  loadSavedTicket("901");
+}, []);
 
   async function loadFlights() {
     setLoadingFlights(true);
@@ -84,26 +90,62 @@ export default function App() {
     return originMatch && destinationMatch && dateMatch;
   }), [flights, originFilter, destinationFilter, dateFilter]);
 
-  async function chooseFlight(flight) {
-    setSelectedFlight(flight);
-    setSelectedSeat(null);
-    setSeats([]);
-    setSeatError("");
-    setNotice(null);
-    setTicketData(null);
-    setLoadingSeats(true);
-    try {
-      const response = await fetch(`${API_BASE}/api/flights/${encodeURIComponent(flight.flightno)}/seats`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || `Server returned ${response.status}`);
-      setSeats(Array.isArray(data) ? data : []);
-      if (!data.length) setSeatError("No seats were returned for this flight.");
-    } catch (error) {
-      setSeatError(`Couldn't load seats. ${error.message}`);
-    } finally {
-      setLoadingSeats(false);
+  
+async function chooseFlight(flight) {
+  setSelectedFlight(flight);
+  setSelectedSeat(null);
+  setSeats([]);
+  setSeatError("");
+  setNotice(null);
+  setLoadingSeats(true);
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/flights/${encodeURIComponent(flight.flightno)}/seats`
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || `Server returned ${response.status}`);
     }
+
+    if (!Array.isArray(data)) {
+      throw new Error("The seat API did not return a list of seats.");
+    }
+
+    setSeats(data);
+
+    if (data.length === 0) {
+      setSeatError("No seats found for this flight. Check the backend seat data.");
+    }
+  } catch (error) {
+    setSeatError(`Couldn't load seats: ${error.message}`);
+  } finally {
+    setLoadingSeats(false);
   }
+}
+
+   
+async function loadSavedTicket(id = passengerId) {
+  if (!String(id).trim()) return;
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/bookings/${encodeURIComponent(String(id).trim())}`
+    );
+
+    const data = await response.json();
+
+    if (response.ok && data.status === "success") {
+      setTickets(data.tickets || []);
+    } else {
+      setTickets([]);
+    }
+  } catch (error) {
+    console.error("Couldn't load saved tickets:", error);
+  }
+}
 
   async function bookSeat(event) {
     event.preventDefault();
@@ -124,11 +166,34 @@ export default function App() {
         })
       });
       const data = await response.json();
-      if (!response.ok || data.status !== "success") throw new Error(data.message || "Booking could not be completed.");
-      setTicketData(data.ticket);
-      setNotice({ type: "success", text: "Your seat has been booked successfully." });
-      await chooseFlight(selectedFlight);
-      setActiveTab("ticket");
+      if (!response.ok || data.status !== "success") {
+  throw new Error(data.message || "Booking could not be completed.");
+}
+
+setTicketData(data.ticket);
+await loadSavedTicket(passengerId);
+
+setNotice({
+  type: "success",
+  text: "Your seat has been booked successfully.",
+});
+
+setActiveTab("ticket");
+
+     console.log("Booking API response:", data);
+console.log("Ticket received:", data.ticket); 
+
+
+await loadSavedTicket(passengerId);
+
+setNotice({
+  type: "success",
+  text: "Your seat has been booked successfully.",
+});
+
+setActiveTab("ticket");
+
+
     } catch (error) {
       setNotice({ type: "error", text: error.message });
     } finally {
@@ -152,6 +217,7 @@ export default function App() {
         })
       });
       const data = await response.json();
+      
       if (!response.ok || data.status !== "success") throw new Error(data.message || "Cancellation failed.");
       setCancelResult(data);
       setNotice({ type: "success", text: data.message || "Booking cancelled." });
@@ -178,9 +244,38 @@ export default function App() {
         </a>
         <button className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle menu"><Menu /></button>
         <nav className={mobileMenu ? "nav-links nav-open" : "nav-links"}>
-          <button className={activeTab === "search" ? "nav-link active" : "nav-link"} onClick={() => { setActiveTab("search"); setMobileMenu(false); }}>Book a flight</button>
-          <button className={activeTab === "ticket" ? "nav-link active" : "nav-link"} onClick={() => { setActiveTab("ticket"); setMobileMenu(false); }}>My ticket</button>
-          <button className={activeTab === "cancel" ? "nav-link active" : "nav-link"} onClick={() => { setActiveTab("cancel"); setMobileMenu(false); }}>Manage booking</button>
+
+          <button
+            className={activeTab === "search" ? "nav-link active" : "nav-link"}
+            onClick={() => {
+              setActiveTab("search");
+              setMobileMenu(false);
+            }}
+          >
+            Book a flight
+          </button>
+
+          <button
+            className={activeTab === "ticket" ? "nav-link active" : "nav-link"}
+            onClick={() => {
+              setActiveTab("ticket");
+              setMobileMenu(false);
+              loadSavedTicket();
+            }}
+          >
+            My ticket
+          </button>
+
+          <button
+            className={activeTab === "cancel" ? "nav-link active" : "nav-link"}
+            onClick={() => {
+              setActiveTab("cancel");
+              setMobileMenu(false);
+            }}
+          >
+            Manage booking
+          </button>
+
         </nav>
         <div className="topbar-right"><span className="secure-label"><ShieldCheck size={15} /> Secure booking</span><span className="avatar">S</span></div>
       </header>
@@ -226,23 +321,81 @@ export default function App() {
               {loadingFlights && <div className="loading-state"><LoaderCircle className="spin" size={28} /><span>Finding your flights…</span></div>}
               {!loadingFlights && !apiError && filteredFlights.length === 0 && <div className="empty-state"><Plane size={30} /><b>No flights match your search</b><span>Try another route or clear your filters.</span><button className="text-button" onClick={resetSearch}>Show all flights</button></div>}
 
-              <div className="flight-list">
-                {filteredFlights.map((flight, index) => (
-                  <article className={`flight-card ${selectedFlight?.flightno === flight.flightno ? "flight-selected" : ""}`} key={`${flight.flightno}-${index}`}>
-                    <div className="airline-symbol"><Plane size={21} /></div>
-                    <div className="flight-main">
-                      <div className="flight-number">{flight.flightno} <span className="flight-tag">DIRECT</span></div>
-                      <div className="route-row">
-                        <div><b>{flight.departure}</b><strong>{flight.origin}</strong><small>{prettyDate(flight.date)}</small></div>
-                        <div className="route-line"><span></span><Plane size={15} /><span></span><small>Flight route</small></div>
-                        <div className="route-destination"><b>{flight.arrival}</b><strong>{flight.destination}</strong><small>Arrival time</small></div>
-                      </div>
-                    </div>
-                    <div className="flight-price"><span>PRICE FROM</span><b>{flight.min_price != null ? money(flight.min_price) : "—"}</b><small>{flight.max_price != null ? `Up to ${money(flight.max_price)}` : "Check seats"}</small></div>
-                    <button className={selectedFlight?.flightno === flight.flightno ? "choose-btn chosen" : "choose-btn"} onClick={() => chooseFlight(flight)}>{selectedFlight?.flightno === flight.flightno ? "Selected" : "Choose flight"} <ChevronRight size={16} /></button>
-                  </article>
-                ))}
-              </div>
+              
+<div className="flight-list">
+  {filteredFlights.map((flight, index) => {
+    console.log("Flight card:", flight.flightno, flight);
+
+    return (
+      <article
+        className={`flight-card ${
+          selectedFlight === flight
+            ? "flight-selected"
+            : ""
+        }`}
+        key={`${flight.flightno}-${index}`}
+      >
+        <div className="airline-symbol">
+          <Plane size={21} />
+        </div>
+
+        <div className="flight-main">
+          <div className="flight-number">
+            {flight.flightno} <span className="flight-tag">DIRECT</span>
+          </div>
+
+          <div className="route-row">
+            <div>
+              <b>{flight.departure}</b>
+              <strong>{flight.origin}</strong>
+              <small>{prettyDate(flight.date)}</small>
+            </div>
+
+            <div className="route-line">
+              <span></span>
+              <Plane size={15} />
+              <span></span>
+              <small>Flight route</small>
+            </div>
+
+            <div className="route-destination">
+              <b>{flight.arrival}</b>
+              <strong>{flight.destination}</strong>
+              <small>Arrival time</small>
+            </div>
+          </div>
+        </div>
+
+        <div className="flight-price">
+          <span>PRICE FROM</span>
+          <b>
+            {flight.min_price != null ? money(flight.min_price) : "—"}
+          </b>
+          <small>
+            {flight.max_price != null
+              ? `Up to ${money(flight.max_price)}`
+              : "Check seats"}
+          </small>
+        </div>
+
+        <button
+          className={
+            selectedFlight === flight
+              ? "choose-btn chosen"
+              : "choose-btn"
+          }
+          onClick={() => chooseFlight(flight)}
+        >
+          {selectedFlight === flight
+            ? "Selected"
+            : "Choose flight"}
+          <ChevronRight size={16} />
+        </button>
+      </article>
+    );
+  })}
+</div>
+
 
               {selectedFlight && <section className="seat-section">
                 <div className="section-heading seat-heading"><div><span className="step-kicker">STEP 02</span><h2>Choose your seat</h2><p>{selectedFlight.flightno} · {selectedFlight.origin} to {selectedFlight.destination}</p></div><span className="seat-legend"><i className="legend-dot available"></i> Available <i className="legend-dot unavailable"></i> Booked</span></div>
